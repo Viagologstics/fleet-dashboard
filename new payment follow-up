@@ -1,0 +1,733 @@
+// ==========================================
+// 1. SPREADSHEET MENU CONFIGURATION
+// ==========================================
+function onOpen() {
+  var ui = SpreadsheetApp.getUi();
+  ui.createMenu('Followup Actions')
+      .addItem('💬 Add Remark Window', 'showRemarkWindow')
+      .addToUi();
+}
+
+function showRemarkWindow() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var cell = sheet.getActiveCell();
+  var row = cell.getRow();
+  
+  if (row < 5) {
+    SpreadsheetApp.getUi().alert("Please select a valid row inside your trip data.");
+    return;
+  }
+  
+  var consignor = sheet.getRange(row, 4).getValue(); // Column D
+  var customer = sheet.getRange(row, 14).getValue();  // Column N
+  var tripId = sheet.getRange(row, 15).getValue();    // Column O
+  var dcLrNo = sheet.getRange(row, 5).getValue();     // Column E
+  var currentHistory = sheet.getRange(row, 18).getValue(); // Column R
+  
+  if (!tripId) {
+    var vehicle = String(sheet.getRange(row, 2).getValue()).replace(/\s+/g, '');
+    var dateVal = sheet.getRange(row, 1).getValue();
+    var formattedDate = dateVal instanceof Date ? Utilities.formatDate(dateVal, "GMT+5:30", "dd/MMM") : String(dateVal);
+    var custClean = customer ? String(customer).trim().replace(/\s+/g, '') : (consignor ? String(consignor).trim().replace(/\s+/g, '') : "UNKNOWN");
+    var dcClean = dcLrNo ? String(dcLrNo).trim().replace(/\s+/g, '') : "NADC";
+    
+    tripId = custClean + "-" + formattedDate + "-" + vehicle + "-" + dcClean;
+  }
+  
+  var ui = SpreadsheetApp.getUi();
+  var promptMessage = "Consignor/Customer: " + (customer || consignor) + "\nTrip ID/Ref / DC: " + tripId + "\n\n--- Current History ---\n" + (currentHistory || "No remarks yet") + "\n\nType your new remark below:";
+  var response = ui.prompt('Add Payment Followup Update', promptMessage, ui.ButtonSet.OK_CANCEL);
+  
+  if (response.getSelectedButton() == ui.Button.OK) {
+    var userEmail = Session.getActiveUser().getEmail();
+    var userName = userEmail ? userEmail.split("@")[0].toUpperCase() : "SHEET_USER";
+    var result = processSingleRemark(tripId, response.getResponseText(), userName);
+    ui.alert(result.success ? "Success!" : "Error", result.message, ui.ButtonSet.OK);
+  }
+}
+
+// ==========================================
+// 2. BROWSER WEB APP PORTAL ENGINE
+// ==========================================
+function doGet() {
+  return HtmlService.createHtmlOutput(getHtmlPortalContent())
+      .setTitle('Payment Followup Portal')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function getPortalData() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var lastRow = sheet.getLastRow();
+  var lastColumn = sheet.getLastColumn(); 
+  
+  if (lastRow < 5) return { trips: [], customers: [], summary: [], months: [] };
+  
+  var data = sheet.getRange(5, 1, lastRow - 4, lastColumn).getValues();
+  var trips = [];
+  var customerMap = {};
+  var summaryList = [];
+  var monthSet = {};
+  
+  data.forEach(function(row) {
+    var dateVal = row[0];    // Column A
+    var vehicle = row[1];    // Column B
+    var consignor = row[3] ? String(row[3]).trim() : "";   // Column D (Consignor Name)
+    var dcLrNo = row[4] ? String(row[4]).trim() : "";      // Column E (Dc/Lr No.)
+    var customer = row[13] ? String(row[13]).trim() : "";  // Column N (Customer Company)
+    var tripId = row[14] ? String(row[14]).trim() : "";    // Column O
+    var pending = row[15] ? Number(row[15]) : 0;   // Column P
+    var remarks = row[17] ? String(row[17]).trim() : ""; // Column R
+    
+    var dateStr = dateVal instanceof Date ? Utilities.formatDate(dateVal, "GMT+5:30", "dd/MMM/yyyy") : String(dateVal);
+    var monthKey = dateVal instanceof Date ? Utilities.formatDate(dateVal, "GMT+5:30", "yyyy-MM") : "Unknown";
+    var monthDisplay = dateVal instanceof Date ? Utilities.formatDate(dateVal, "GMT+5:30", "MMM yyyy") : "Unknown";
+    
+    if (dateVal instanceof Date) {
+      monthSet[monthKey] = monthDisplay;
+    }
+
+    var dateTimeObj = dateVal instanceof Date ? dateVal.getTime() : 0;
+    var primaryParty = customer || consignor || "Unknown Party";
+    
+    if (!tripId || tripId === "") {
+      var custKey = primaryParty.replace(/\s+/g, '');
+      var vehKey = vehicle ? String(vehicle).replace(/\s+/g, '') : "NA";
+      var dcKey = dcLrNo ? dcLrNo.replace(/\s+/g, '') : "NADC";
+      tripId = custKey + "-" + dateStr + "-" + vehKey + "-" + dcKey;
+    }
+    
+    var status = (remarks !== "") ? "✅ Updated" : "⏳ Pending Note";
+    
+    trips.push({
+      id: tripId,
+      label: "Party: " + primaryParty + " | DC/Ref: " + (dcLrNo || tripId) + " | Vehicle: " + (vehicle || "N/A") + " | Pending: ₹" + pending,
+      dateTimeVal: dateTimeObj
+    });
+    
+    summaryList.push({
+      id: tripId,
+      dcLrNo: dcLrNo || "-",
+      customer: primaryParty,
+      vehicle: vehicle || "N/A",
+      pending: pending,
+      status: status,
+      latestRemark: remarks.split("\n")[0],
+      unloadedDate: dateStr,
+      monthKey: monthKey,
+      dateTimeVal: dateTimeObj
+    });
+    
+    if (primaryParty !== "") {
+      if (!customerMap[primaryParty]) {
+        customerMap[primaryParty] = {
+          records: []
+        };
+      }
+      customerMap[primaryParty].records.push({
+        pending: pending,
+        dateStr: dateStr,
+        monthKey: monthKey,
+        dateTimeVal: dateTimeObj
+      });
+    }
+  });
+  
+  var processedCustomers = Object.keys(customerMap).map(function(cust) {
+    var recs = customerMap[cust].records;
+    var totalPending = 0;
+    
+    recs.sort(function(a, b) { return a.dateTimeVal - b.dateTimeVal; });
+    
+    recs.forEach(function(r) {
+      totalPending += r.pending;
+    });
+
+    return {
+      name: cust,
+      records: recs,
+      label: cust + " (Total Pending: ₹" + totalPending + " across " + recs.length + " shipments)"
+    };
+  }).sort(function(a, b) {
+    return a.name.localeCompare(b.name);
+  });
+  
+  var sortedMonths = Object.keys(monthSet).map(function(key) {
+    return { key: key, name: monthSet[key] };
+  }).sort(function(a, b) {
+    return b.key.localeCompare(a.key);
+  });
+  
+  return { trips: trips, customers: processedCustomers, summary: summaryList, months: sortedMonths };
+}
+
+function processSingleRemark(tripId, rawRemark, userName) {
+  return executeMasterUpdate(tripId, rawRemark, userName, false);
+}
+
+function processBulkRemark(customerName, rawRemark, userName) {
+  return executeMasterUpdate(customerName, rawRemark, userName, true);
+}
+
+function executeMasterUpdate(searchKey, rawRemark, userName, isBulk) {
+  var typedRemark = String(rawRemark).trim();
+  if (!typedRemark) return { success: false, message: "Remark text cannot be empty." };
+  
+  var timestamp = Utilities.formatDate(new Date(), "GMT+5:30", "dd/MMM/yyyy HH:mm");
+  var formattedRemark = "[" + timestamp + " - " + userName.toUpperCase().trim() + "]: " + typedRemark;
+  
+  var sourceUrl = "https://docs.google.com/spreadsheets/d/14df7O7yZp5dBXaNKucWAXuDAB7YWwyIr6n2_e5s5Jzg/edit";
+  var sourceSs = SpreadsheetApp.openByUrl(sourceUrl);
+  var sourceSheet = sourceSs.getSheetByName("trips");
+  
+  var sourceMasterLastRow = sourceSheet.getLastRow();
+  var sourceMasterLastCol = sourceSheet.getLastColumn();
+  var sourceData = sourceSheet.getRange(1, 1, sourceMasterLastRow, sourceMasterLastCol).getValues();
+  
+  var consignorCol = 3;  // Column D (Consignor Name) -> index 3
+  var dcCol = 4;         // Column E (Dc/Lr No.) -> index 4
+  var customerCol = 13;  // Column N (Customer Company) -> index 13
+  var tripIdCol = 32;    // Column AG (Trip ID / Reference) -> index 32
+  var targetCol = 105;   // Column DB
+  
+  var matchCount = 0;
+  
+  for (var i = 0; i < sourceData.length; i++) {
+    var isMatch = false;
+    
+    if (isBulk) {
+      var rowCust = String(sourceData[i][customerCol]).trim();
+      var rowConsignor = String(sourceData[i][consignorCol]).trim();
+      isMatch = (rowCust === String(searchKey).trim() || rowConsignor === String(searchKey).trim());
+    } else {
+      var rowTripId = String(sourceData[i][tripIdCol]).trim();
+      var rowDc = String(sourceData[i][dcCol]).trim();
+      isMatch = (rowTripId == String(searchKey).trim() || rowDc == String(searchKey).trim());
+    }
+    
+    if (isMatch) {
+      var sourceRow = i + 1;
+      var masterCell = sourceSheet.getRange(sourceRow, targetCol + 1);
+      var masterHistory = masterCell.getValue();
+      
+      masterCell.setValue(masterHistory !== "" ? formattedRemark + "\n" + masterHistory : formattedRemark);
+      matchCount++;
+      
+      if (!isBulk) break;
+    }
+  }
+  
+  if (matchCount > 0) {
+    return { success: true, message: "Log tracking update recorded directly into the Master Trips Sheet! Matched rows: " + matchCount };
+  } else {
+    return { success: false, message: "Could not find a matching record inside the Master Trips sheet for reference: " + searchKey };
+  }
+}
+
+// ==========================================
+// 3. HTML PORTAL ENGINE
+// ==========================================
+function getHtmlPortalContent() {
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <style>
+      body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; padding: 15px 5px; margin: 0; }
+      .container { max-width: 1000px; margin: 0 auto; padding: 0 5px; }
+      .card { background: #ffffff; padding: 20px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); margin-bottom: 20px; }
+      h2, h3 { color: #1a73e8; border-bottom: 2px solid #e8f0fe; padding-bottom: 10px; margin-top: 0; font-size: 18px; }
+      label { display: block; margin-top: 15px; font-weight: 600; color: #444; font-size: 13px; }
+      input[type="text"], input[type="date"], select, textarea { width: 100%; padding: 12px; margin-top: 6px; border: 1px solid #dadce0; border-radius: 6px; box-sizing: border-box; font-size: 14px; }
+      
+      .pivot-header-toggle { display: flex; justify-content: space-between; align-items: center; cursor: pointer; user-select: none; }
+      .pivot-header-toggle:hover h3 { color: #1557b0; }
+      .toggle-icon { font-size: 16px; color: #1a73e8; font-weight: bold; transition: transform 0.2s; }
+      .collapsed .toggle-icon { transform: rotate(-90deg); }
+      
+      .radio-group { margin: 15px 0; display: flex; gap: 20px; }
+      .radio-label { font-weight: normal; cursor: pointer; display: flex; align-items: center; gap: 5px; font-size: 14px; }
+      button { background-color: #1a73e8; color: white; border: none; padding: 14px; border-radius: 6px; width: 100%; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 20px; }
+      button:hover { background-color: #1557b0; }
+      
+      .table-wrapper { overflow-x: auto; margin-top: 15px; border: 1px solid #e0e0e0; border-radius: 8px; -webkit-overflow-scrolling: touch; }
+      table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; white-space: nowrap; }
+      th, td { padding: 10px 12px; border-bottom: 1px solid #e0e0e0; }
+      th { background-color: #f8f9fa; font-weight: 600; color: #5f6368; }
+      tfoot tr td { background-color: #f1f3f4; font-weight: bold; color: #202124; border-top: 2px solid #dadce0; }
+      .badge { padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold; display: inline-block; }
+      .badge-updated { background-color: #e6f4ea; color: #137333; }
+      .badge-pending { background-color: #fef7e0; color: #b06000; }
+      
+      .filter-box { background: #f8f9fa; border: 1px solid #e0e0e0; padding: 12px; border-radius: 8px; margin-bottom: 12px; }
+      .filter-checkboxes { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; max-height: 150px; overflow-y: auto; }
+      .filter-chip { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; cursor: pointer; background: #fff; padding: 6px 10px; border: 1px solid #dadce0; border-radius: 20px; }
+      .filter-chip input { cursor: pointer; }
+
+      #status { margin-top: 15px; text-align: center; font-weight: bold; padding: 10px; border-radius: 4px; display: none; font-size: 13px; }
+      .success { background-color: #e6f4ea; color: #137333; }
+      .error { background-color: #fce8e6; color: #c5221f; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      
+      <div class="card">
+        <h2>Payment Followup Console</h2>
+        <div id="screen1">
+          <label for="userNameInput">Enter Your Name / Identifier:</label>
+          <input type="text" id="userNameInput" placeholder="E.g., RAJESH / AMIT">
+          <label>Select Action Mode:</label>
+          <div class="radio-group">
+            <label class="radio-label"><input type="radio" name="mode" value="single" checked onclick="toggleModeView()"> Single Row</label>
+            <label class="radio-label"><input type="radio" name="mode" value="bulk" onclick="toggleModeView()"> Bulk Grid</label>
+          </div>
+          <button onclick="goToScreen2()">Configure & Unlock Form</button>
+        </div>
+
+        <div id="screen2" class="hidden">
+          <div id="welcomeMsg" style="font-weight: bold; color: #5f6368; background: #f8f9fa; padding: 10px; border-radius: 6px; margin-bottom: 15px; font-size: 12px;"></div>
+          
+          <div id="singleRowContainer">
+            <label for="tripSearchInput">Search & Select Trip (by Party, Consignor, DC No., or Ref):</label>
+            <input type="text" id="tripSearchInput" placeholder="Type to filter by party name, consignor, DC No., etc..." onkeyup="filterDropdown('tripSearchInput', 'tripSelect')">
+            <select id="tripSelect" size="5" style="margin-top: 6px;"><option>Loading rows...</option></select>
+          </div>
+          
+          <div id="bulkCustomerContainer" class="hidden">
+            <label for="customerSearchInput">Search & Select Customer/Consignor:</label>
+            <input type="text" id="customerSearchInput" placeholder="Type to filter customers or consignors..." onkeyup="filterDropdown('customerSearchInput', 'customerSelect')">
+            <select id="customerSelect" size="5" style="margin-top: 6px;"><option>Loading customers...</option></select>
+          </div>
+
+          <label for="remarkText">Followup Remarks Note:</label>
+          <textarea id="remarkText" rows="4" placeholder="Type exactly what happened during your collection call..."></textarea>
+          <button onclick="submitFollowup()">Submit Update Logs</button>
+          <button onclick="goBackToScreen1()" style="background-color: #9aa0a6; margin-top: 10px;">Switch User/Mode</button>
+        </div>
+        <div id="status"></div>
+      </div>
+
+      <div class="card collapsed" id="pivotCard">
+        <div class="pivot-header-toggle" onclick="togglePivotGrid()">
+          <h3 style="border-bottom: none; padding-bottom: 0; margin-bottom: 0;">📊 Transporter Summary View (Tap to Open)</h3>
+          <span class="toggle-icon" id="pivotIcon">▼</span>
+        </div>
+        
+        <div id="pivotContent" class="hidden">
+          
+          <!-- Month Selection Filter Control Panel -->
+          <div class="filter-box">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <span style="font-weight: 600; font-size: 13px; color: #3c4043;">Filter Summary by Month(s):</span>
+              <div>
+                <button onclick="toggleAllMonths(true)" style="padding: 4px 10px; font-size: 11px; margin-top: 0; width: auto; background: #e8f0fe; color: #1a73e8;">Select All</button>
+                <button onclick="toggleAllMonths(false)" style="padding: 4px 10px; font-size: 11px; margin-top: 0; width: auto; background: #f1f3f4; color: #5f6368; margin-left: 6px;">Deselect All</button>
+              </div>
+            </div>
+            <div class="filter-checkboxes" id="monthCheckboxesContainer">
+              <span style="font-size: 12px; color: #999;">Loading available months...</span>
+            </div>
+          </div>
+
+          <div class="table-wrapper">
+            <table id="transporterTable">
+              <thead>
+                <tr>
+                  <th>Customer / Consignor Name</th>
+                  <th>Trips</th>
+                  <th>Outstanding Balance</th>
+                  <th>1st Unloaded Date</th>
+                  <th>Last Pending Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td colspan="5" style="text-align: center; color: #999;">Building layout...</td></tr>
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td>Total</td>
+                  <td id="totalTripsCount">0</td>
+                  <td id="totalOutstandingAmount" style="color: #b06000;">₹0</td>
+                  <td colspan="2">-</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Live Shipment Audit Tracker</h3>
+        
+        <!-- Date Range Filter Controls -->
+        <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; align-items: flex-end;">
+          <div style="flex: 1; min-width: 140px;">
+            <label for="startDateFilter" style="margin-top:0;">From Date:</label>
+            <input type="date" id="startDateFilter" onchange="applyFilters()">
+          </div>
+          <div style="flex: 1; min-width: 140px;">
+            <label for="endDateFilter" style="margin-top:0;">To Date:</label>
+            <input type="date" id="endDateFilter" onchange="applyFilters()">
+          </div>
+          <div>
+            <button onclick="clearDateFilter()" style="margin-top:0; padding: 12px 14px; background-color: #6c757d; width: auto;">Reset Filter</button>
+          </div>
+        </div>
+
+        <!-- Customer Column N Filter Control Panel -->
+        <div class="filter-box" style="margin-top: 15px;">
+          <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 600; font-size: 13px; color: #3c4043;">Filter Audit Tracker by Customer / Consignor (Column N):</span>
+            <div>
+              <button onclick="toggleAllCustomers(true)" style="padding: 4px 10px; font-size: 11px; margin-top: 0; width: auto; background: #e8f0fe; color: #1a73e8;">Select All</button>
+              <button onclick="toggleAllCustomers(false)" style="padding: 4px 10px; font-size: 11px; margin-top: 0; width: auto; background: #f1f3f4; color: #5f6368; margin-left: 6px;">Deselect All</button>
+            </div>
+          </div>
+          <div class="filter-checkboxes" id="auditCustomerCheckboxesContainer">
+            <span style="font-size: 12px; color: #999;">Loading customers...</span>
+          </div>
+        </div>
+
+        <div class="table-wrapper">
+          <table id="summaryTable">
+            <thead>
+              <tr>
+                <th>DC / LR No.</th>
+                <th>Trip ID / Ref Key</th>
+                <th>Customer / Consignor</th>
+                <th>Vehicle No</th>
+                <th>Pending Amount</th>
+                <th>Status</th>
+                <th>Latest Remark</th>
+                <th>Unloaded Date</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr><td colspan="8" style="text-align: center; color: #999;">Fetching sheet pipeline...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+    <script>
+      var cachedData = null;
+      var activeName = "";
+      var activeMode = "single";
+
+      window.onload = function() {
+        refreshPortalGrid();
+      };
+
+      function refreshPortalGrid() {
+        google.script.run.withSuccessHandler(function(response) {
+          cachedData = response;
+          populateFormDropdowns();
+          buildMonthCheckboxes();
+          buildAuditCustomerCheckboxes();
+          buildAuditDashboard();
+          buildTransporterLedger();
+        }).getPortalData();
+      }
+
+      function togglePivotGrid() {
+        var card = document.getElementById('pivotCard');
+        var content = document.getElementById('pivotContent');
+        var icon = document.getElementById('pivotIcon');
+        
+        if (content.classList.contains('hidden')) {
+          content.classList.remove('hidden');
+          card.classList.remove('collapsed');
+          icon.innerText = "▲";
+        } else {
+          content.classList.add('hidden');
+          card.classList.add('collapsed');
+          icon.innerText = "▼";
+        }
+      }
+
+      function populateFormDropdowns() {
+        if (!cachedData) return;
+        var tripSelect = document.getElementById('tripSelect');
+        tripSelect.innerHTML = '';
+        cachedData.trips.forEach(function(t) {
+          var opt = document.createElement('option');
+          opt.value = t.id;
+          opt.innerText = t.label;
+          tripSelect.appendChild(opt);
+        });
+        
+        var custSelect = document.getElementById('customerSelect');
+        custSelect.innerHTML = '';
+        cachedData.customers.forEach(function(c) {
+          var opt = document.createElement('option');
+          opt.value = c.name;
+          opt.innerText = c.label;
+          custSelect.appendChild(opt);
+        });
+      }
+
+      function buildMonthCheckboxes() {
+        if (!cachedData || !cachedData.months) return;
+        var container = document.getElementById('monthCheckboxesContainer');
+        container.innerHTML = '';
+        
+        if (cachedData.months.length === 0) {
+          container.innerHTML = '<span style="font-size: 12px; color: #999;">No dates found.</span>';
+          return;
+        }
+
+        cachedData.months.forEach(function(m) {
+          var label = document.createElement('label');
+          label.className = 'filter-chip';
+          label.innerHTML = '<input type="checkbox" value="' + m.key + '" checked onchange="buildTransporterLedger()"> ' + m.name;
+          container.appendChild(label);
+        });
+      }
+
+      function buildAuditCustomerCheckboxes() {
+        if (!cachedData || !cachedData.customers) return;
+        var container = document.getElementById('auditCustomerCheckboxesContainer');
+        container.innerHTML = '';
+        
+        if (cachedData.customers.length === 0) {
+          container.innerHTML = '<span style="font-size: 12px; color: #999;">No customers found.</span>';
+          return;
+        }
+
+        cachedData.customers.forEach(function(cust) {
+          var nameUpper = cust.name.toUpperCase();
+          // Check if it matches default deselection targets
+          var isDefaultChecked = true;
+          if (nameUpper.includes("ABLE COLD CHAIN LOGISTICS") || nameUpper.includes("NIPPON EXPRESS")) {
+            isDefaultChecked = false;
+          }
+
+          var label = document.createElement('label');
+          label.className = 'filter-chip';
+          label.innerHTML = '<input type="checkbox" value="' + cust.name + '" ' + (isDefaultChecked ? 'checked' : '') + ' onchange="buildAuditDashboard()"> ' + cust.name;
+          container.appendChild(label);
+        });
+      }
+
+      function toggleAllMonths(selectState) {
+        var checkboxes = document.querySelectorAll('#monthCheckboxesContainer input[type="checkbox"]');
+        checkboxes.forEach(function(chk) {
+          chk.checked = selectState;
+        });
+        buildTransporterLedger();
+      }
+
+      function toggleAllCustomers(selectState) {
+        var checkboxes = document.querySelectorAll('#auditCustomerCheckboxesContainer input[type="checkbox"]');
+        checkboxes.forEach(function(chk) {
+          chk.checked = selectState;
+        });
+        buildAuditDashboard();
+      }
+
+      function filterDropdown(searchInputId, selectId) {
+        var input = document.getElementById(searchInputId);
+        var filter = input.value.toLowerCase();
+        var select = document.getElementById(selectId);
+        var options = select.options;
+
+        for (var i = 0; i < options.length; i++) {
+          var txtValue = options[i].text || options[i].innerText;
+          if (txtValue.toLowerCase().indexOf(filter) > -1) {
+            options[i].style.display = "";
+          } else {
+            options[i].style.display = "none";
+          }
+        }
+      }
+
+      function buildAuditDashboard() {
+        if (!cachedData || !cachedData.summary) return;
+        var tbody = document.querySelector('#summaryTable tbody');
+        tbody.innerHTML = '';
+        
+        var startDate = document.getElementById('startDateFilter').value;
+        var endDate = document.getElementById('endDateFilter').value;
+        var startTimestamp = startDate ? new Date(startDate).setHours(0,0,0,0) : 0;
+        var endTimestamp = endDate ? new Date(endDate).setHours(23,59,59,999) : 8640000000000;
+        
+        // Collect checked audit customers
+        var checkedAuditCusts = {};
+        var customerCheckboxes = document.querySelectorAll('#auditCustomerCheckboxesContainer input[type="checkbox"]:checked');
+        customerCheckboxes.forEach(function(chk) {
+          checkedAuditCusts[chk.value] = true;
+        });
+        
+        var filteredRows = cachedData.summary.filter(function(row) {
+          // Check date filter
+          if (row.dateTimeVal > 0) {
+            if (row.dateTimeVal < startTimestamp || row.dateTimeVal > endTimestamp) return false;
+          }
+          // Check customer filter
+          if (!checkedAuditCusts[row.customer]) return false;
+          
+          return true;
+        });
+        
+        if (filteredRows.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #999;">No records found for the selected filter criteria.</td></tr>';
+          return;
+        }
+
+        filteredRows.forEach(function(row) {
+          var tr = document.createElement('tr');
+          var badgeClass = (row.status.includes('Updated')) ? 'badge-updated' : 'badge-pending';
+          
+          tr.innerHTML = "<td style='font-weight: 600; color: #1a73e8;'>" + row.dcLrNo + "</td>" +
+                         "<td>" + row.id + "</td>" +
+                         "<td>" + row.customer + "</td>" +
+                         "<td>" + row.vehicle + "</td>" +
+                         "<td style='font-weight: bold;'>₹" + row.pending + "</td>" +
+                         "<td><span class='badge " + badgeClass + "'>" + row.status + "</span></td>" +
+                         "<td style='color:#666;' title='" + row.latestRemark + "'>" + (row.latestRemark || '-') + "</td>" +
+                         "<td style='font-weight: 500; color: #202124;'>" + row.unloadedDate + "</td>";
+          tbody.appendChild(tr);
+        });
+      }
+
+      function buildTransporterLedger() {
+        if (!cachedData || !cachedData.customers) return;
+        var tbody = document.querySelector('#transporterTable tbody');
+        tbody.innerHTML = '';
+        
+        var checkedMonths = {};
+        var checkboxes = document.querySelectorAll('#monthCheckboxesContainer input[type="checkbox"]:checked');
+        checkboxes.forEach(function(chk) {
+          checkedMonths[chk.value] = true;
+        });
+        
+        var totalTrips = 0;
+        var totalPending = 0;
+        var displayedCustomersCount = 0;
+        
+        cachedData.customers.forEach(function(cust) {
+          var validRecords = cust.records.filter(function(r) {
+            if (r.monthKey === "Unknown") return true;
+            return checkedMonths[r.monthKey];
+          });
+          
+          if (validRecords.length === 0) return;
+          
+          displayedCustomersCount++;
+          var custTotalPending = 0;
+          
+          validRecords.forEach(function(r) {
+            custTotalPending += r.pending;
+          });
+          
+          totalTrips += validRecords.length;
+          totalPending += custTotalPending;
+          
+          var initialDate = validRecords[0].dateStr;
+          var latestDate = validRecords[validRecords.length - 1].dateStr;
+          
+          var tr = document.createElement('tr');
+          tr.innerHTML = "<td style='font-weight: 600; color: #1a73e8;'>" + cust.name + "</td>" +
+                         "<td>" + validRecords.length + "</td>" +
+                         "<td style='font-weight: bold; color: #b06000;'>₹" + custTotalPending + "</td>" +
+                         "<td>" + initialDate + "</td>" +
+                         "<td>" + latestDate + "</td>";
+          tbody.appendChild(tr);
+        });
+        
+        if (displayedCustomersCount === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">No records found for the selected month(s).</td></tr>';
+        }
+        
+        document.getElementById('totalTripsCount').innerText = totalTrips;
+        document.getElementById('totalOutstandingAmount').innerText = "₹" + totalPending;
+      }
+
+      function applyFilters() {
+        buildAuditDashboard();
+      }
+
+      function clearDateFilter() {
+        document.getElementById('startDateFilter').value = '';
+        document.getElementById('endDateFilter').value = '';
+        buildAuditDashboard();
+      }
+
+      function toggleModeView() {
+        var mode = document.querySelector('input[name="mode"]:checked').value;
+        if(mode === 'single') {
+          document.getElementById('singleRowContainer').classList.remove('hidden');
+          document.getElementById('bulkCustomerContainer').classList.add('hidden');
+        } else {
+          document.getElementById('singleRowContainer').classList.add('hidden');
+          document.getElementById('bulkCustomerContainer').classList.remove('hidden');
+        }
+      }
+
+      function goToScreen2() {
+        var nameInput = document.getElementById('userNameInput').value.trim();
+        if(!nameInput) {
+          showStatus("Please supply your identity label.", false);
+          return;
+        }
+        hideStatus();
+        activeName = nameInput;
+        activeMode = document.querySelector('input[name="mode"]:checked').value;
+        
+        document.getElementById('welcomeMsg').innerText = "Operator: " + activeName.toUpperCase() + " | [" + (activeMode === 'single' ? 'Single Row' : 'Bulk Customer') + "]";
+        document.getElementById('screen1').classList.add('hidden');
+        document.getElementById('screen2').classList.remove('hidden');
+        toggleModeView();
+      }
+
+      function goBackToScreen1() {
+        hideStatus();
+        document.getElementById('screen2').classList.add('hidden');
+        document.getElementById('screen1').classList.remove('hidden');
+      }
+
+      function submitFollowup() {
+        var text = document.getElementById('remarkText').value;
+        if(!text.trim()) {
+          showStatus("Please construct a brief remark.", false);
+          return;
+        }
+        
+        showStatus("Transmitting update logs...", true);
+        
+        if (activeMode === 'single') {
+          var tripId = document.getElementById('tripSelect').value;
+          google.script.run.withSuccessHandler(handleBackendResponse).processSingleRemark(tripId, text, activeName);
+        } else {
+          var custName = document.getElementById('customerSelect').value;
+          google.script.run.withSuccessHandler(handleBackendResponse).processBulkRemark(custName, text, activeName);
+        }
+      }
+
+      function handleBackendResponse(res) {
+        showStatus(res.message, res.success);
+        if(res.success) { 
+          document.getElementById('remarkText').value = '';
+          refreshPortalGrid(); 
+        }
+      }
+
+      function showStatus(msg, isSuccess) {
+        var statusDiv = document.getElementById('status');
+        statusDiv.innerText = msg;
+        statusDiv.className = isSuccess ? 'success' : 'error';
+        statusDiv.style.display = 'block';
+      }
+      
+      function hideStatus() {
+        document.getElementById('status').style.display = 'none';
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
