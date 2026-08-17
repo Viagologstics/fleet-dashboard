@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+  * { box-sizing: border-box; }
+  
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background-color: #f4f6f9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  
+  /* Top Navigation Bar */
+  .tab-header {
+    display: flex;
+    flex-wrap: nowrap; /* Forces all tabs to stay on a single row */
+    background-color: #1a73e8;
+    padding: 0 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    flex-shrink: 0;
+    overflow-x: auto;
+    overflow-y: hidden;
+    z-index: 10;
+  }
+  
+  .tab-btn {
+    background: none;
+    border: none;
+    color: rgba(255, 255, 255, 0.7);
+    padding: 12px 16px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap; /* Prevents text from breaking into multiple rows */
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s ease;
+    flex-shrink: 0; /* Prevents buttons from squishing */
+  }
+  
+  .tab-btn:hover {
+    color: #fff;
+  }
+  
+  .tab-btn.active {
+    color: #fff;
+    border-bottom: 3px solid #fff;
+  }
+  
+  /* Content Container for Frames */
+  .frame-container {
+    flex-grow: 1;
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+  
+  /* Keep all iframes rendered in background to preserve state and prevent menu resets */
+  .app-frame {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    border: none;
+    background: #fff;
+    visibility: hidden;
+    z-index: 1;
+  }
+  
+  .app-frame.active {
+    visibility: visible;
+    z-index: 2;
+  }
+
+  /* Direct Action View for Tab 5 */
+  .tab5-pane {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #fff;
+    padding: 20px;
+    text-align: center;
+    visibility: hidden;
+    z-index: 1;
+  }
+  
+  .tab5-pane.active {
+    visibility: visible;
+    z-index: 2;
+  }
+
+  .external-launch-card {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 12px;
+    padding: 30px 24px;
+    max-width: 400px;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.02);
+  }
+
+  .external-launch-card h3 {
+    margin-top: 0;
+    color: #333;
+    font-size: 18px;
+    margin-bottom: 10px;
+  }
+
+  .external-launch-card p {
+    color: #666;
+    font-size: 13px;
+    line-height: 1.5;
+    margin-bottom: 20px;
+  }
+
+  .launch-btn {
+    background: #1a73e8;
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-block;
+  }
+  
+  .launch-btn:hover {
+    background: #1557b0;
+  }
+</style>
+</head>
+<body>
+
+  <!-- Tab Navigation Headers -->
+  <div class="tab-header">
+    <button class="tab-btn active" onclick="switchTab('tab1', event)">Viago Express - Fleet Status</button>
+    <button class="tab-btn" onclick="switchTab('tab2', event)">Payment followup</button>
+    <button class="tab-btn" onclick="switchTab('tab3', event)">Viago Adhoc Trip Portal</button>
+    <button class="tab-btn" onclick="switchTab('tab4', event)">Fleet Status All Trips</button>
+    <button class="tab-btn" onclick="switchTab('tab5', event)">Indent Creation Trip Entry</button>
+  </div>
+
+  <!-- Embedded Web App Frames -->
+  <div class="frame-container">
+    <!-- Tab 1 -->
+    <iframe id="tab1" class="app-frame active" src="https://script.google.com/macros/s/AKfycbxq4-EQ7shJzRiX3m1uFhrr0cGr6pOLSg2X_k-IpDsFSBPBPGIto2Jj_hJCGMwhVlqJ/exec"></iframe>
+    
+    // <!-- Tab 2 -->
+    //<iframe id="tab2" class="app-frame" src="https://script.google.com/macros/s/AKfycbzbLhA_OyroED5CSgpTRlDuVtdXp3mkOK9Fpt5NrbrtKJex6K_3CEpX-i3nAsduYGLT/exec"></iframe>  // Old script 
+   
+    <!-- Tab 3 -->
+    <iframe id="tab3" class="app-frame" src="https://script.google.com/macros/s/AKfycbwlG6DyPMqAWhii1Q9ZYyL_y1-jNtHHAJKMKMcTT4hC0L5vovVaQwWWH7dXgBcci8IJ/exec"></iframe>
+
+    <!-- Tab 4 -->
+    <iframe id="tab4" class="app-frame" src="https://script.google.com/macros/s/AKfycbz05LlAUOoVHZPNyR-0jvlSvGqNOxNLov_zdTDzyf3408QXsHTmX0oPJ_Wa0EwmIvCx/exec"></iframe>
+    
+    <!-- Tab 5 -->
+    <div id="tab5" class="tab5-pane">
+      <div class="external-launch-card">
+        <h3>Indent Creation Trip Entry</h3>
+        <p>This module requires a dedicated window layout due to external script security blocks.</p>
+        <a href="https://script.google.com/macros/s/AKfycbxy2yTXqDokawwjkAVbKVbJy9uiNSZ-kZULT36CoCF3Tti7yOrT6i-6nFFUnXO6jxREJQ/exec" target="_blank" class="launch-btn">Open Tool in Separate Window ↗</a>
+      </div>
+    </div>
+  </div>
+
+<script>
+  function switchTab(tabId, event) {
+    document.querySelectorAll('.app-frame, .tab5-pane').forEach(el => {
+      el.classList.remove('active');
+    });
+    
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+    });
+    
+    document.getElementById(tabId).classList.add('active');
+    event.currentTarget.classList.add('active');
+  }
+</script>
+
+</body>
+</html>
