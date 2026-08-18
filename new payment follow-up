@@ -59,106 +59,262 @@ function doGet() {
 function getPortalData() {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
   var lastRow = sheet.getLastRow();
-  var lastColumn = sheet.getLastColumn(); 
-  
-  if (lastRow < 5) return { trips: [], customers: [], summary: [], months: [] };
-  
-  var data = sheet.getRange(5, 1, lastRow - 4, lastColumn).getValues();
-  var trips = [];
-  var customerMap = {};
-  var summaryList = [];
-  var monthSet = {};
-  
-  data.forEach(function(row) {
-    var dateVal = row[0];    // Column A
-    var vehicle = row[1];    // Column B
-    var consignor = row[3] ? String(row[3]).trim() : "";   // Column D (Consignor Name)
-    var dcLrNo = row[4] ? String(row[4]).trim() : "";      // Column E (Dc/Lr No.)
-    var customer = row[13] ? String(row[13]).trim() : "";  // Column N (Customer Company)
-    var tripId = row[14] ? String(row[14]).trim() : "";    // Column O
-    var pending = row[15] ? Number(row[15]) : 0;   // Column P
-    var remarks = row[17] ? String(row[17]).trim() : ""; // Column R
-    
-    var dateStr = dateVal instanceof Date ? Utilities.formatDate(dateVal, "GMT+5:30", "dd/MMM/yyyy") : String(dateVal);
-    var monthKey = dateVal instanceof Date ? Utilities.formatDate(dateVal, "GMT+5:30", "yyyy-MM") : "Unknown";
-    var monthDisplay = dateVal instanceof Date ? Utilities.formatDate(dateVal, "GMT+5:30", "MMM yyyy") : "Unknown";
-    
-    if (dateVal instanceof Date) {
-      monthSet[monthKey] = monthDisplay;
-    }
 
-    var dateTimeObj = dateVal instanceof Date ? dateVal.getTime() : 0;
+  if (lastRow < 5) {
+    return { trips: [], customers: [], summary: [], months: [] };
+  }
+
+  // IMPORTANT: Initial page load contains NO transporter remark history.
+  // This keeps the first response small and fast.
+  var data = sheet.getRange(5, 1, lastRow - 4, 18).getValues();
+
+  var trips = [];
+  var summaryList = [];
+  var customerNames = Object.create(null);
+  var monthSet = Object.create(null);
+
+  data.forEach(function(row) {
+    var dateVal = row[0];
+    var vehicle = row[1];
+    var consignor = row[3] ? String(row[3]).trim() : "";
+    var dcLrNo = row[4] ? String(row[4]).trim() : "";
+    var customer = row[13] ? String(row[13]).trim() : "";
+    var tripId = row[14] ? String(row[14]).trim() : "";
+    var pending = row[15] ? Number(row[15]) : 0;
+    var remarks = row[17] ? String(row[17]).trim() : "";
+
+    var isDate = dateVal instanceof Date;
+    var dateTimeObj = isDate ? dateVal.getTime() : 0;
+
+    var dateStr = isDate
+      ? Utilities.formatDate(dateVal, "GMT+5:30", "dd/MMM/yyyy")
+      : String(dateVal);
+
+    var monthKey = isDate
+      ? Utilities.formatDate(dateVal, "GMT+5:30", "yyyy-MM")
+      : "Unknown";
+
+    var monthDisplay = isDate
+      ? Utilities.formatDate(dateVal, "GMT+5:30", "MMM yyyy")
+      : "Unknown";
+
+    if (isDate) monthSet[monthKey] = monthDisplay;
+
     var primaryParty = customer || consignor || "Unknown Party";
-    
-    if (!tripId || tripId === "") {
-      var custKey = primaryParty.replace(/\s+/g, '');
-      var vehKey = vehicle ? String(vehicle).replace(/\s+/g, '') : "NA";
-      var dcKey = dcLrNo ? dcLrNo.replace(/\s+/g, '') : "NADC";
+
+    if (!tripId) {
+      var custKey = primaryParty.replace(/\s+/g, "");
+      var vehKey = vehicle ? String(vehicle).replace(/\s+/g, "") : "NA";
+      var dcKey = dcLrNo ? dcLrNo.replace(/\s+/g, "") : "NADC";
       tripId = custKey + "-" + dateStr + "-" + vehKey + "-" + dcKey;
     }
-    
-    var status = (remarks !== "") ? "✅ Updated" : "⏳ Pending Note";
-    
+
     trips.push({
       id: tripId,
-      label: "Party: " + primaryParty + " | DC/Ref: " + (dcLrNo || tripId) + " | Vehicle: " + (vehicle || "N/A") + " | Pending: ₹" + pending,
+      label:
+        "Party: " + primaryParty +
+        " | DC/Ref: " + (dcLrNo || tripId) +
+        " | Vehicle: " + (vehicle || "N/A") +
+        " | Pending: ₹" + pending,
       dateTimeVal: dateTimeObj
     });
-    
+
     summaryList.push({
       id: tripId,
       dcLrNo: dcLrNo || "-",
       customer: primaryParty,
       vehicle: vehicle || "N/A",
       pending: pending,
-      status: status,
-      latestRemark: remarks.split("\n")[0],
+      status: remarks ? "✅ Updated" : "⏳ Pending Note",
+      latestRemark: remarks ? remarks.split("\n")[0] : "",
       unloadedDate: dateStr,
       monthKey: monthKey,
       dateTimeVal: dateTimeObj
     });
-    
-    if (primaryParty !== "") {
-      if (!customerMap[primaryParty]) {
-        customerMap[primaryParty] = {
-          records: []
-        };
-      }
-      customerMap[primaryParty].records.push({
-        pending: pending,
-        dateStr: dateStr,
-        monthKey: monthKey,
-        dateTimeVal: dateTimeObj
+
+    customerNames[primaryParty] = true;
+  });
+
+  var processedCustomers = Object.keys(customerNames)
+    .map(function(name) {
+      return {
+        name: name,
+        label: name
+      };
+    })
+    .sort(function(a, b) {
+      return a.name.localeCompare(b.name);
+    });
+
+  var sortedMonths = Object.keys(monthSet)
+    .map(function(key) {
+      return { key: key, name: monthSet[key] };
+    })
+    .sort(function(a, b) {
+      return b.key.localeCompare(a.key);
+    });
+
+  return {
+    trips: trips,
+    customers: processedCustomers,
+    summary: summaryList,
+    months: sortedMonths
+  };
+}
+
+
+/**
+ * Loads transporter summary ONLY when the user opens the summary.
+ * This is deliberately a separate server call so the initial page
+ * does not download/process all historical remarks.
+ */
+function getTransporterSummary() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var lastRow = sheet.getLastRow();
+
+  if (lastRow < 5) {
+    return { customers: [], months: [] };
+  }
+
+  var data = sheet.getRange(5, 1, lastRow - 4, 18).getValues();
+
+  var customerMap = Object.create(null);
+  var monthSet = Object.create(null);
+
+  data.forEach(function(row) {
+    var dateVal = row[0];
+    var consignor = row[3] ? String(row[3]).trim() : "";
+    var customer = row[13] ? String(row[13]).trim() : "";
+    var pending = row[15] ? Number(row[15]) : 0;
+    var remarks = row[17] ? String(row[17]).trim() : "";
+
+    var isDate = dateVal instanceof Date;
+    var dateTimeObj = isDate ? dateVal.getTime() : 0;
+
+    var dateStr = isDate
+      ? Utilities.formatDate(dateVal, "GMT+5:30", "dd/MMM/yyyy")
+      : String(dateVal);
+
+    var monthKey = isDate
+      ? Utilities.formatDate(dateVal, "GMT+5:30", "yyyy-MM")
+      : "Unknown";
+
+    var monthDisplay = isDate
+      ? Utilities.formatDate(dateVal, "GMT+5:30", "MMM yyyy")
+      : "Unknown";
+
+    if (isDate) monthSet[monthKey] = monthDisplay;
+
+    var primaryParty = customer || consignor || "Unknown Party";
+
+    if (!customerMap[primaryParty]) {
+      customerMap[primaryParty] = {
+        name: primaryParty,
+        monthBuckets: Object.create(null)
+      };
+    }
+
+    var cust = customerMap[primaryParty];
+
+    if (!cust.monthBuckets[monthKey]) {
+      cust.monthBuckets[monthKey] = {
+        trips: 0,
+        pending: 0,
+        firstTime: dateTimeObj || 0,
+        lastTime: dateTimeObj || 0,
+        firstDate: dateStr,
+        lastDate: dateStr,
+        remarks: [],
+        remarkSeen: Object.create(null)
+      };
+    }
+
+    var bucket = cust.monthBuckets[monthKey];
+
+    bucket.trips++;
+    bucket.pending += pending;
+
+    if (
+      dateTimeObj &&
+      (!bucket.firstTime || dateTimeObj < bucket.firstTime)
+    ) {
+      bucket.firstTime = dateTimeObj;
+      bucket.firstDate = dateStr;
+    }
+
+    if (
+      dateTimeObj &&
+      (!bucket.lastTime || dateTimeObj > bucket.lastTime)
+    ) {
+      bucket.lastTime = dateTimeObj;
+      bucket.lastDate = dateStr;
+    }
+
+    if (remarks) {
+      remarks.split("\n").forEach(function(line) {
+        var cleanLine = line.trim();
+        if (!cleanLine || bucket.remarkSeen[cleanLine]) return;
+
+        bucket.remarkSeen[cleanLine] = true;
+
+        var remarkTime = 0;
+        var match = cleanLine.match(/\[(.*?)\]/);
+
+        if (match && match[1]) {
+          var parsed = new Date(
+            match[1].split(" - ")[0]
+          );
+
+          if (!isNaN(parsed.getTime())) {
+            remarkTime = parsed.getTime();
+          }
+        }
+
+        bucket.remarks.push({
+          text: cleanLine,
+          time: remarkTime
+        });
       });
     }
   });
-  
-  var processedCustomers = Object.keys(customerMap).map(function(cust) {
-    var recs = customerMap[cust].records;
-    var totalPending = 0;
-    
-    recs.sort(function(a, b) { return a.dateTimeVal - b.dateTimeVal; });
-    
-    recs.forEach(function(r) {
-      totalPending += r.pending;
+
+  var customers = Object.keys(customerMap)
+    .map(function(name) {
+      var c = customerMap[name];
+
+      Object.keys(c.monthBuckets).forEach(function(monthKey) {
+        c.monthBuckets[monthKey].remarks.sort(function(a, b) {
+          return b.time - a.time;
+        });
+
+        // Do not send internal duplicate-tracking object to browser.
+        delete c.monthBuckets[monthKey].remarkSeen;
+      });
+
+      return {
+        name: c.name,
+        monthBuckets: c.monthBuckets
+      };
+    })
+    .sort(function(a, b) {
+      return a.name.localeCompare(b.name);
     });
 
-    return {
-      name: cust,
-      records: recs,
-      label: cust + " (Total Pending: ₹" + totalPending + " across " + recs.length + " shipments)"
-    };
-  }).sort(function(a, b) {
-    return a.name.localeCompare(b.name);
-  });
-  
-  var sortedMonths = Object.keys(monthSet).map(function(key) {
-    return { key: key, name: monthSet[key] };
-  }).sort(function(a, b) {
-    return b.key.localeCompare(a.key);
-  });
-  
-  return { trips: trips, customers: processedCustomers, summary: summaryList, months: sortedMonths };
+  var months = Object.keys(monthSet)
+    .map(function(key) {
+      return {
+        key: key,
+        name: monthSet[key]
+      };
+    })
+    .sort(function(a, b) {
+      return b.key.localeCompare(a.key);
+    });
+
+  return {
+    customers: customers,
+    months: months
+  };
 }
 
 function processSingleRemark(tripId, rawRemark, userName) {
@@ -252,7 +408,7 @@ function getHtmlPortalContent() {
       
       .table-wrapper { overflow-x: auto; margin-top: 15px; border: 1px solid #e0e0e0; border-radius: 8px; -webkit-overflow-scrolling: touch; }
       table { width: 100%; border-collapse: collapse; text-align: left; font-size: 12px; white-space: nowrap; }
-      th, td { padding: 10px 12px; border-bottom: 1px solid #e0e0e0; }
+      th, td { padding: 10px 12px; border-bottom: 1px solid #e0e0e0; vertical-align: top; }
       th { background-color: #f8f9fa; font-weight: 600; color: #5f6368; }
       tfoot tr td { background-color: #f1f3f4; font-weight: bold; color: #202124; border-top: 2px solid #dadce0; }
       .badge { padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold; display: inline-block; }
@@ -277,7 +433,7 @@ function getHtmlPortalContent() {
         <h2>Payment Followup Console</h2>
         <div id="screen1">
           <label for="userNameInput">Enter Your Name / Identifier:</label>
-          <input type="text" id="userNameInput" placeholder="E.g., RAJESH / AMIT">
+          <input type="text" id="userNameInput" placeholder="Enter Your Name">
           <label>Select Action Mode:</label>
           <div class="radio-group">
             <label class="radio-label"><input type="radio" name="mode" value="single" checked onclick="toggleModeView()"> Single Row</label>
@@ -340,17 +496,18 @@ function getHtmlPortalContent() {
                   <th>Outstanding Balance</th>
                   <th>1st Unloaded Date</th>
                   <th>Last Pending Date</th>
+                  <th>Consolidated Remarks</th>
                 </tr>
               </thead>
               <tbody>
-                <tr><td colspan="5" style="text-align: center; color: #999;">Building layout...</td></tr>
+                <tr><td colspan="6" style="text-align: center; color: #999;">Building layout...</td></tr>
               </tbody>
               <tfoot>
                 <tr>
                   <td>Total</td>
                   <td id="totalTripsCount">0</td>
                   <td id="totalOutstandingAmount" style="color: #b06000;">₹0</td>
-                  <td colspan="2">-</td>
+                  <td colspan="3">-</td>
                 </tr>
               </tfoot>
             </table>
@@ -379,7 +536,7 @@ function getHtmlPortalContent() {
         <!-- Customer Column N Filter Control Panel -->
         <div class="filter-box" style="margin-top: 15px;">
           <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-weight: 600; font-size: 13px; color: #3c4043;">Filter Audit Tracker by Customer / Consignor (Column N):</span>
+            <span style="font-weight: 600; font-size: 13px; color: #3c4043;">Filter Audit Tracker by Customer / Consignor:</span>
             <div>
               <button onclick="toggleAllCustomers(true)" style="padding: 4px 10px; font-size: 11px; margin-top: 0; width: auto; background: #e8f0fe; color: #1a73e8;">Select All</button>
               <button onclick="toggleAllCustomers(false)" style="padding: 4px 10px; font-size: 11px; margin-top: 0; width: auto; background: #f1f3f4; color: #5f6368; margin-left: 6px;">Deselect All</button>
@@ -415,33 +572,86 @@ function getHtmlPortalContent() {
 
     <script>
       var cachedData = null;
+      var transporterData = null;
+      var transporterLedgerBuilt = false;
+      var transporterLoading = false;
       var activeName = "";
       var activeMode = "single";
 
-      window.onload = function() {
+      if (typeof google !== 'undefined' && google.script && google.script.run) {
         refreshPortalGrid();
-      };
+      } else {
+        window.onload = function() {
+          refreshPortalGrid();
+        };
+      }
 
       function refreshPortalGrid() {
-        google.script.run.withSuccessHandler(function(response) {
-          cachedData = response;
-          populateFormDropdowns();
-          buildMonthCheckboxes();
-          buildAuditCustomerCheckboxes();
-          buildAuditDashboard();
-          buildTransporterLedger();
-        }).getPortalData();
+        google.script.run
+          .withSuccessHandler(function(response) {
+            cachedData = response;
+            populateFormDropdowns();
+            buildMonthCheckboxes();
+            buildAuditCustomerCheckboxes();
+            buildAuditDashboard();
+            transporterData = null;
+            transporterLedgerBuilt = false;
+            transporterLoading = false;
+          })
+          .withFailureHandler(function(err) {
+            console.error("Failed to load portal data: ", err);
+            var tbodySummary = document.querySelector('#summaryTable tbody');
+            if (tbodySummary) tbodySummary.innerHTML = '<tr><td colspan="8" style="text-align: center; color: #c5221f;">Error loading data from sheet. Please refresh.</td></tr>';
+          })
+          .getPortalData();
       }
 
       function togglePivotGrid() {
         var card = document.getElementById('pivotCard');
         var content = document.getElementById('pivotContent');
         var icon = document.getElementById('pivotIcon');
-        
+
         if (content.classList.contains('hidden')) {
           content.classList.remove('hidden');
           card.classList.remove('collapsed');
           icon.innerText = "▲";
+
+          if (!transporterData && !transporterLoading) {
+            transporterLoading = true;
+
+            var tbody = document.querySelector(
+              '#transporterTable tbody'
+            );
+
+            tbody.innerHTML =
+              '<tr><td colspan="6" style="text-align:center;color:#777;padding:20px;">' +
+              'Loading transporter summary... Please wait.' +
+              '</td></tr>';
+
+            google.script.run
+              .withSuccessHandler(function(response) {
+                transporterData = response;
+                transporterLoading = false;
+                transporterLedgerBuilt = true;
+
+                buildTransporterMonthCheckboxes();
+                buildTransporterLedger();
+              })
+              .withFailureHandler(function(err) {
+                transporterLoading = false;
+
+                tbody.innerHTML =
+                  '<tr><td colspan="6" style="text-align:center;color:#c5221f;padding:20px;">' +
+                  'Error loading transporter summary: ' +
+                  escapeHtml(err && err.message ? err.message : err) +
+                  '</td></tr>';
+              })
+              .getTransporterSummary();
+
+          } else if (transporterData) {
+            buildTransporterLedger();
+          }
+
         } else {
           content.classList.add('hidden');
           card.classList.add('collapsed');
@@ -449,43 +659,73 @@ function getHtmlPortalContent() {
         }
       }
 
+      function buildTransporterMonthCheckboxes() {
+        if (!transporterData || !transporterData.months) return;
+
+        var container =
+          document.getElementById(
+            'monthCheckboxesContainer'
+          );
+
+        container.innerHTML = '';
+
+        if (!transporterData.months.length) {
+          container.innerHTML =
+            '<span style="font-size:12px;color:#999;">No dates found.</span>';
+          return;
+        }
+
+        transporterData.months.forEach(function(m) {
+          var label = document.createElement('label');
+
+          label.className = 'filter-chip';
+
+          label.innerHTML =
+            '<input type="checkbox" value="' +
+            escapeHtml(m.key) +
+            '" checked onchange="buildTransporterLedger()"> ' +
+            escapeHtml(m.name);
+
+          container.appendChild(label);
+        });
+      }
+
       function populateFormDropdowns() {
         if (!cachedData) return;
         var tripSelect = document.getElementById('tripSelect');
         tripSelect.innerHTML = '';
-        cachedData.trips.forEach(function(t) {
+        if (cachedData.trips.length === 0) {
           var opt = document.createElement('option');
-          opt.value = t.id;
-          opt.innerText = t.label;
+          opt.innerText = "No trips available";
           tripSelect.appendChild(opt);
-        });
+        } else {
+          cachedData.trips.forEach(function(t) {
+            var opt = document.createElement('option');
+            opt.value = t.id;
+            opt.innerText = t.label;
+            tripSelect.appendChild(opt);
+          });
+        }
         
         var custSelect = document.getElementById('customerSelect');
         custSelect.innerHTML = '';
-        cachedData.customers.forEach(function(c) {
+        if (cachedData.customers.length === 0) {
           var opt = document.createElement('option');
-          opt.value = c.name;
-          opt.innerText = c.label;
+          opt.innerText = "No customers available";
           custSelect.appendChild(opt);
-        });
+        } else {
+          cachedData.customers.forEach(function(c) {
+            var opt = document.createElement('option');
+            opt.value = c.name;
+            opt.innerText = c.label;
+            custSelect.appendChild(opt);
+          });
+        }
       }
 
       function buildMonthCheckboxes() {
-        if (!cachedData || !cachedData.months) return;
-        var container = document.getElementById('monthCheckboxesContainer');
-        container.innerHTML = '';
-        
-        if (cachedData.months.length === 0) {
-          container.innerHTML = '<span style="font-size: 12px; color: #999;">No dates found.</span>';
-          return;
-        }
-
-        cachedData.months.forEach(function(m) {
-          var label = document.createElement('label');
-          label.className = 'filter-chip';
-          label.innerHTML = '<input type="checkbox" value="' + m.key + '" checked onchange="buildTransporterLedger()"> ' + m.name;
-          container.appendChild(label);
-        });
+        // Transporter months are loaded separately when the summary is opened.
+        return;
       }
 
       function buildAuditCustomerCheckboxes() {
@@ -500,7 +740,6 @@ function getHtmlPortalContent() {
 
         cachedData.customers.forEach(function(cust) {
           var nameUpper = cust.name.toUpperCase();
-          // Check if it matches default deselection targets
           var isDefaultChecked = true;
           if (nameUpper.includes("ABLE COLD CHAIN LOGISTICS") || nameUpper.includes("NIPPON EXPRESS")) {
             isDefaultChecked = false;
@@ -514,11 +753,22 @@ function getHtmlPortalContent() {
       }
 
       function toggleAllMonths(selectState) {
-        var checkboxes = document.querySelectorAll('#monthCheckboxesContainer input[type="checkbox"]');
+        var checkboxes = document.querySelectorAll(
+          '#monthCheckboxesContainer input[type="checkbox"]'
+        );
+
         checkboxes.forEach(function(chk) {
           chk.checked = selectState;
         });
-        buildTransporterLedger();
+
+        if (
+          !document
+            .getElementById('pivotContent')
+            .classList.contains('hidden')
+        ) {
+          buildTransporterLedger();
+          transporterLedgerBuilt = true;
+        }
       }
 
       function toggleAllCustomers(selectState) {
@@ -555,7 +805,6 @@ function getHtmlPortalContent() {
         var startTimestamp = startDate ? new Date(startDate).setHours(0,0,0,0) : 0;
         var endTimestamp = endDate ? new Date(endDate).setHours(23,59,59,999) : 8640000000000;
         
-        // Collect checked audit customers
         var checkedAuditCusts = {};
         var customerCheckboxes = document.querySelectorAll('#auditCustomerCheckboxesContainer input[type="checkbox"]:checked');
         customerCheckboxes.forEach(function(chk) {
@@ -563,13 +812,10 @@ function getHtmlPortalContent() {
         });
         
         var filteredRows = cachedData.summary.filter(function(row) {
-          // Check date filter
           if (row.dateTimeVal > 0) {
             if (row.dateTimeVal < startTimestamp || row.dateTimeVal > endTimestamp) return false;
           }
-          // Check customer filter
           if (!checkedAuditCusts[row.customer]) return false;
-          
           return true;
         });
         
@@ -595,56 +841,129 @@ function getHtmlPortalContent() {
       }
 
       function buildTransporterLedger() {
-        if (!cachedData || !cachedData.customers) return;
-        var tbody = document.querySelector('#transporterTable tbody');
-        tbody.innerHTML = '';
-        
-        var checkedMonths = {};
-        var checkboxes = document.querySelectorAll('#monthCheckboxesContainer input[type="checkbox"]:checked');
-        checkboxes.forEach(function(chk) {
+        if (!transporterData || !transporterData.customers) return;
+
+        var tbody = document.querySelector(
+          '#transporterTable tbody'
+        );
+
+        var checkedMonths = Object.create(null);
+
+        document.querySelectorAll(
+          '#monthCheckboxesContainer input[type="checkbox"]:checked'
+        ).forEach(function(chk) {
           checkedMonths[chk.value] = true;
         });
-        
+
         var totalTrips = 0;
         var totalPending = 0;
+        var rowsHtml = [];
         var displayedCustomersCount = 0;
-        
-        cachedData.customers.forEach(function(cust) {
-          var validRecords = cust.records.filter(function(r) {
-            if (r.monthKey === "Unknown") return true;
-            return checkedMonths[r.monthKey];
+
+        transporterData.customers.forEach(function(cust) {
+          var trips = 0;
+          var pending = 0;
+          var firstTime = 0;
+          var lastTime = 0;
+          var firstDate = "-";
+          var lastDate = "-";
+          var remarksMap = Object.create(null);
+          var remarksList = [];
+
+          Object.keys(cust.monthBuckets).forEach(function(monthKey) {
+            if (
+              monthKey !== "Unknown" &&
+              !checkedMonths[monthKey]
+            ) {
+              return;
+            }
+
+            var bucket = cust.monthBuckets[monthKey];
+
+            trips += bucket.trips;
+            pending += bucket.pending;
+
+            if (
+              bucket.firstTime &&
+              (!firstTime || bucket.firstTime < firstTime)
+            ) {
+              firstTime = bucket.firstTime;
+              firstDate = bucket.firstDate;
+            }
+
+            if (
+              bucket.lastTime &&
+              (!lastTime || bucket.lastTime > lastTime)
+            ) {
+              lastTime = bucket.lastTime;
+              lastDate = bucket.lastDate;
+            }
+
+            bucket.remarks.forEach(function(r) {
+              if (!remarksMap[r.text]) {
+                remarksMap[r.text] = true;
+                remarksList.push(r);
+              }
+            });
           });
-          
-          if (validRecords.length === 0) return;
-          
+
+          if (!trips) return;
+
           displayedCustomersCount++;
-          var custTotalPending = 0;
-          
-          validRecords.forEach(function(r) {
-            custTotalPending += r.pending;
+          totalTrips += trips;
+          totalPending += pending;
+
+          remarksList.sort(function(a, b) {
+            return b.time - a.time;
           });
-          
-          totalTrips += validRecords.length;
-          totalPending += custTotalPending;
-          
-          var initialDate = validRecords[0].dateStr;
-          var latestDate = validRecords[validRecords.length - 1].dateStr;
-          
-          var tr = document.createElement('tr');
-          tr.innerHTML = "<td style='font-weight: 600; color: #1a73e8;'>" + cust.name + "</td>" +
-                         "<td>" + validRecords.length + "</td>" +
-                         "<td style='font-weight: bold; color: #b06000;'>₹" + custTotalPending + "</td>" +
-                         "<td>" + initialDate + "</td>" +
-                         "<td>" + latestDate + "</td>";
-          tbody.appendChild(tr);
+
+          var consolidatedText =
+            remarksList.length
+              ? remarksList.map(function(r) {
+                  return escapeHtml(r.text);
+                }).join("<br>")
+              : "-";
+
+          rowsHtml.push(
+            "<tr>" +
+              "<td style='font-weight:600;color:#1a73e8;'>" +
+                escapeHtml(cust.name) +
+              "</td>" +
+              "<td>" + trips + "</td>" +
+              "<td style='font-weight:bold;color:#b06000;'>₹" +
+                pending +
+              "</td>" +
+              "<td>" + escapeHtml(firstDate) + "</td>" +
+              "<td>" + escapeHtml(lastDate) + "</td>" +
+              "<td style='white-space:pre-wrap;color:#444;font-size:11px;max-width:350px;'>" +
+                consolidatedText +
+              "</td>" +
+            "</tr>"
+          );
         });
-        
-        if (displayedCustomersCount === 0) {
-          tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #999;">No records found for the selected month(s).</td></tr>';
-        }
-        
-        document.getElementById('totalTripsCount').innerText = totalTrips;
-        document.getElementById('totalOutstandingAmount').innerText = "₹" + totalPending;
+
+        tbody.innerHTML = displayedCustomersCount
+          ? rowsHtml.join("")
+          : '<tr><td colspan="6" style="text-align:center;color:#999;">No records found for the selected month(s).</td></tr>';
+
+        document.getElementById(
+          'totalTripsCount'
+        ).innerText = totalTrips;
+
+        document.getElementById(
+          'totalOutstandingAmount'
+        ).innerText = "₹" + totalPending;
+      }
+
+      function escapeHtml(value) {
+        return String(
+          value == null ? "" : value
+        )
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
       }
 
       function applyFilters() {
@@ -701,10 +1020,16 @@ function getHtmlPortalContent() {
         
         if (activeMode === 'single') {
           var tripId = document.getElementById('tripSelect').value;
-          google.script.run.withSuccessHandler(handleBackendResponse).processSingleRemark(tripId, text, activeName);
+          google.script.run
+            .withSuccessHandler(handleBackendResponse)
+            .withFailureHandler(function(err) { showStatus("Error: " + err.message, false); })
+            .processSingleRemark(tripId, text, activeName);
         } else {
           var custName = document.getElementById('customerSelect').value;
-          google.script.run.withSuccessHandler(handleBackendResponse).processBulkRemark(custName, text, activeName);
+          google.script.run
+            .withSuccessHandler(handleBackendResponse)
+            .withFailureHandler(function(err) { showStatus("Error: " + err.message, false); })
+            .processBulkRemark(custName, text, activeName);
         }
       }
 
