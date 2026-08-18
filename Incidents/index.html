@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+      :root {
+        --primary-color: #0b57d0;
+        --primary-hover: #084298;
+        --bg-color: #f4f6f9;
+        --card-bg: #ffffff;
+        --text-main: #202124;
+        --text-muted: #5f6368;
+        --border-color: #dadce0;
+      }
+
+      body {
+        font-family: Arial, sans-serif;
+        background: var(--bg-color);
+        margin: 0;
+        padding: 10px;
+        color: var(--text-main);
+        box-sizing: border-box;
+      }
+
+      /* Balanced desktop width to eliminate huge empty side gutters */
+      .container {
+        width: 100%;
+        max-width: 900px;
+        background: var(--card-bg);
+        padding: 24px 30px;
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+        margin: 15px auto;
+        box-sizing: border-box;
+      }
+
+      @media (min-width: 900px) {
+        body { padding: 25px; }
+        .container { padding: 30px 40px; }
+      }
+
+      h2 {
+        color: var(--text-main);
+        text-align: center;
+        margin-top: 0;
+        margin-bottom: 20px;
+        font-size: 22px;
+      }
+
+      .nav-tabs {
+        display: flex;
+        justify-content: center;
+        margin-bottom: 22px;
+        border-bottom: 2px solid var(--border-color);
+        padding-bottom: 12px;
+        gap: 12px;
+      }
+
+      .nav-tabs button {
+        background: #e0e0e0;
+        border: none;
+        padding: 10px 24px;
+        cursor: pointer;
+        font-weight: bold;
+        border-radius: 6px;
+        font-size: 14px;
+        transition: 0.2s;
+      }
+
+      .nav-tabs button.active {
+        background: var(--primary-color);
+        color: white;
+      }
+
+      label {
+        display: block;
+        margin-top: 12px;
+        font-weight: bold;
+        color: var(--text-muted);
+        font-size: 13px;
+      }
+
+      select, input, textarea {
+        width: 100%;
+        padding: 11px;
+        margin-top: 5px;
+        border: 1px solid var(--border-color);
+        border-radius: 6px;
+        box-sizing: border-box;
+        font-size: 14px;
+        background-color: #fff;
+      }
+
+      input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: var(--primary-color);
+        box-shadow: 0 0 0 2px rgba(11, 87, 208, 0.15);
+      }
+
+      textarea {
+        resize: vertical;
+        height: 75px;
+      }
+
+      /* Clean 2-Column Desktop Form Layout */
+      .form-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px 20px;
+      }
+
+      @media (min-width: 768px) {
+        .form-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+        .form-full-span {
+          grid-column: span 2;
+        }
+      }
+
+      .submit-btn {
+        width: 100%;
+        background: var(--primary-color);
+        color: white;
+        padding: 13px;
+        border: none;
+        border-radius: 6px;
+        margin-top: 22px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.2s;
+      }
+
+      .submit-btn:hover {
+        background: var(--primary-hover);
+      }
+
+      #message {
+        margin-top: 15px;
+        text-align: center;
+        font-weight: bold;
+        font-size: 14px;
+      }
+
+      .view-section { display: none; }
+      .view-section.active { display: block; }
+
+      /* Executive KPI Dashboard Stats Cards */
+      .stats-container {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+        margin-top: 15px;
+      }
+
+      .stat-card {
+        background: #f8f9fa;
+        border: 1px solid var(--border-color);
+        padding: 14px;
+        border-radius: 8px;
+        text-align: center;
+        border-top: 4px solid var(--primary-color);
+      }
+
+      .stat-card.orange { border-top-color: #f9ab00; }
+      .stat-card.red { border-top-color: #d93025; }
+
+      .stat-card h3 {
+        margin: 0;
+        font-size: 24px;
+        color: var(--text-main);
+      }
+
+      .stat-card p {
+        margin: 5px 0 0 0;
+        font-size: 11px;
+        color: var(--text-muted);
+        font-weight: bold;
+      }
+
+      /* Fleet Summary Table */
+      .fleet-table-wrapper {
+        margin-top: 15px;
+        max-height: 380px;
+        overflow-y: auto;
+        border: 1px solid var(--border-color);
+        border-radius: 8px;
+      }
+
+      .fleet-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        text-align: left;
+      }
+
+      .fleet-table th {
+        background: #f1f3f4;
+        padding: 11px 14px;
+        border-bottom: 2px solid var(--border-color);
+        color: #3c4043;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+      }
+
+      .fleet-table td {
+        padding: 11px 14px;
+        border-bottom: 1px solid #eee;
+      }
+
+      .fleet-table tr:hover { background: #f8f9fa; }
+
+      /* Log Items List */
+      .log-card-list {
+        margin-top: 15px;
+        max-height: 380px;
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+
+      .log-item {
+        background: #fff;
+        border: 1px solid var(--border-color);
+        border-left: 4px solid var(--primary-color);
+        padding: 12px 14px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        font-size: 13px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+      }
+
+      .log-item.incident { border-left-color: #d93025; }
+      .log-meta { font-size: 11px; color: var(--text-muted); margin-bottom: 3px; font-weight: bold; }
+
+      .flex-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-top: 15px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="nav-tabs">
+        <button id="tabForm" class="active" onclick="switchView('form')">Data Entry</button>
+        <button id="tabDash" onclick="switchView('dash')">Executive Dashboard</button>
+      </div>
+
+      <div id="formView" class="view-section active">
+        <h2>Vehicle Log Portal</h2>
+        
+        <div class="form-grid">
+          <div>
+            <label for="vehicleSearch">Search / Filter Vehicle:</label>
+            <input type="text" id="vehicleSearch" placeholder="Type vehicle number..." onkeyup="filterFormVehicles()">
+          </div>
+          <div>
+            <label for="vehicleSelect">Select Vehicle Number:</label>
+            <select id="vehicleSelect">
+              <option value="">Loading vehicles...</option>
+            </select>
+          </div>
+          
+          <div>
+            <label for="startDateField">Start Date:</label>
+            <input type="date" id="startDateField">
+          </div>
+          <div>
+            <label for="endDateField">End Date (Optional for date ranges):</label>
+            <input type="date" id="endDateField">
+          </div>
+          
+          <div class="form-full-span">
+            <label for="entryType">Log Category / Classification:</label>
+            <select id="entryType">
+              <option value="Non-Run">Non-Run (Planned / Standby / Maintenance)</option>
+              <option value="Incident">Incident (Breakdown / Accident / Failure)</option>
+              <option value="Remarks">Operational Remarks</option>
+              <option value="Resolution">Resolution / Maintenance Fix</option>
+              <option value="Action">Corrective Action Taken</option>
+            </select>
+          </div>
+
+          <div class="form-full-span">
+            <label for="detailsField">Details / Reason (Required):</label>
+            <textarea id="detailsField" placeholder="Enter clear description..."></textarea>
+          </div>
+        </div>
+        
+        <button class="submit-btn" onclick="submitData()">Submit Entry</button>
+        <div id="message"></div>
+      </div>
+
+      <div id="dashView" class="view-section">
+        <h2>Fleet Analytics</h2>
+        
+        <div class="form-grid" style="margin-bottom: 5px;">
+          <div>
+            <label for="dashVehicleSearch">Filter Vehicle Dropdown:</label>
+            <input type="text" id="dashVehicleSearch" placeholder="Type vehicle number..." onkeyup="filterDashVehicles()">
+          </div>
+          <div>
+            <label for="dashVehicleSelect">Select Specific Vehicle (Drill-down):</label>
+            <select id="dashVehicleSelect" onchange="handleVehicleSelection()">
+              <option value="">-- All Fleet Overview (Macro View) --</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="dashboardContent" style="margin-top: 15px;"></div>
+      </div>
+    </div>
+
+    <script>
+      var allVehicles = [];
+
+      window.onload = function() {
+        google.script.run.withSuccessHandler(function(vehicles) {
+          allVehicles = vehicles;
+          populateVehicles(vehicles, 'vehicleSelect');
+          populateVehicles(vehicles, 'dashVehicleSelect');
+        }).getVehicleList();
+        
+        loadMacroDashboard();
+
+        var today = new Date().toISOString().split('T')[0];
+        document.getElementById('startDateField').value = today;
+        document.getElementById('endDateField').value = today;
+      };
+
+      function switchView(viewName) {
+        if (viewName === 'form') {
+          document.getElementById('formView').classList.add('active');
+          document.getElementById('dashView').classList.remove('active');
+          document.getElementById('tabForm').classList.add('active');
+          document.getElementById('tabDash').classList.remove('active');
+        } else {
+          document.getElementById('formView').classList.remove('active');
+          document.getElementById('dashView').classList.add('active');
+          document.getElementById('tabForm').classList.remove('active');
+          document.getElementById('tabDash').classList.add('active');
+          
+          if (!document.getElementById('dashVehicleSelect').value) {
+            loadMacroDashboard();
+          }
+        }
+      }
+
+      function populateVehicles(vehicles, elementId) {
+        var select = document.getElementById(elementId);
+        var currentVal = select.value;
+        select.innerHTML = '<option value="">-- All Fleet Overview (Macro View) --</option>';
+        vehicles.forEach(function(v) {
+          var opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = v;
+          select.appendChild(opt);
+        });
+        select.value = currentVal;
+      }
+
+      function filterFormVehicles() {
+        var query = document.getElementById('vehicleSearch').value.toLowerCase();
+        var filtered = allVehicles.filter(function(v) { return v.toLowerCase().indexOf(query) !== -1; });
+        var select = document.getElementById('vehicleSelect');
+        select.innerHTML = '<option value="">-- Choose Vehicle --</option>';
+        filtered.forEach(function(v) {
+          var opt = document.createElement('option'); opt.value = v; opt.textContent = v;
+          select.appendChild(opt);
+        });
+      }
+
+      function filterDashVehicles() {
+        var query = document.getElementById('dashVehicleSearch').value.toLowerCase();
+        var filtered = allVehicles.filter(function(v) { return v.toLowerCase().indexOf(query) !== -1; });
+        var select = document.getElementById('dashVehicleSelect');
+        var currentVal = select.value;
+        select.innerHTML = '<option value="">-- All Fleet Overview (Macro View) --</option>';
+        filtered.forEach(function(v) {
+          var opt = document.createElement('option'); opt.value = v; opt.textContent = v;
+          select.appendChild(opt);
+        });
+        select.value = currentVal;
+      }
+
+      function submitData() {
+        var vehicle = document.getElementById('vehicleSelect').value;
+        var startDate = document.getElementById('startDateField').value;
+        var endDate = document.getElementById('endDateField').value;
+        var entryType = document.getElementById('entryType').value;
+        var details = document.getElementById('detailsField').value;
+        var msgDiv = document.getElementById('message');
+
+        if (!vehicle || !startDate || !details.trim()) {
+          msgDiv.style.color = '#d93025';
+          msgDiv.textContent = 'Please complete all required fields and remarks!';
+          return;
+        }
+
+        msgDiv.style.color = '#333';
+        msgDiv.textContent = 'Submitting entry...';
+
+        google.script.run
+          .withSuccessHandler(function(res) {
+            msgDiv.style.color = '#137333';
+            msgDiv.textContent = res;
+            document.getElementById('detailsField').value = '';
+          })
+          .withFailureHandler(function(err) {
+            msgDiv.style.color = '#d93025';
+            msgDiv.textContent = 'Error: ' + err.message;
+          })
+          .submitNonRunData(vehicle, startDate, endDate, entryType, details);
+      }
+
+      function handleVehicleSelection() {
+        var vehicle = document.getElementById('dashVehicleSelect').value;
+        if (!vehicle) { loadMacroDashboard(); } else { loadVehicleDashboard(vehicle); }
+      }
+
+      function loadMacroDashboard() {
+        var container = document.getElementById('dashboardContent');
+        container.innerHTML = '<p style="text-align: center; color: #666;">Analyzing fleet data...</p>';
+
+        google.script.run.withSuccessHandler(function(macroData) {
+          var html = '';
+          html += '<div class="stats-container">';
+          html += '<div class="stat-card"><h3>' + macroData.totalFleetSize + '</h3><p>TOTAL VEHICLES</p></div>';
+          html += '<div class="stat-card orange"><h3>' + macroData.totalNonRuns + '</h3><p>NON-RUN DAYS</p></div>';
+          html += '<div class="stat-card red"><h3>' + macroData.totalIncidents + '</h3><p>CRITICAL INCIDENTS</p></div>';
+          html += '</div>';
+
+          html += '<div style="margin-top: 15px;">';
+          html += '<input type="text" id="tableFilterInput" placeholder="Filter table records by vehicle..." onkeyup="filterFleetTable()">';
+          html += '</div>';
+
+          html += '<div class="fleet-table-wrapper">';
+          html += '<table class="fleet-table" id="fleetSummaryTable">';
+          html += '<thead><tr><th>Vehicle Number</th><th style="text-align: center;">Non-Run</th><th style="text-align: center;">Incidents</th></tr></thead>';
+          html += '<tbody>';
+
+          if (macroData.fleetSummary && macroData.fleetSummary.length > 0) {
+            macroData.fleetSummary.forEach(function(row) {
+              html += '<tr onclick="selectVehicleFromTable(\'' + row.vehicle + '\')" style="cursor: pointer;">';
+              html += '<td><strong>' + row.vehicle + '</strong></td>';
+              html += '<td style="text-align: center;">' + row.nonRunCount + '</td>';
+              html += '<td style="text-align: center;">' + row.incidentCount + '</td>';
+              html += '</tr>';
+            });
+          } else {
+            html += '<tr><td colspan="3" style="text-align: center; color: #888;">No active records found in sheet.</td></tr>';
+          }
+
+          html += '</tbody></table></div>';
+          container.innerHTML = html;
+        }).getFleetMacroData();
+      }
+
+      function selectVehicleFromTable(vehicleNo) {
+        document.getElementById('dashVehicleSelect').value = vehicleNo;
+        loadVehicleDashboard(vehicleNo);
+      }
+
+      function filterFleetTable() {
+        var query = document.getElementById('tableFilterInput').value.toLowerCase();
+        var table = document.getElementById('fleetSummaryTable');
+        var tr = table.getElementsByTagName('tr');
+        for (var i = 1; i < tr.length; i++) {
+          var td = tr[i].getElementsByTagName('td')[0];
+          if (td) {
+            var txtValue = td.textContent || td.innerText;
+            tr[i].style.display = (txtValue.toLowerCase().indexOf(query) > -1) ? "" : "none";
+          }
+        }
+      }
+
+      function loadVehicleDashboard(vehicle) {
+        var container = document.getElementById('dashboardContent');
+        container.innerHTML = '<p style="text-align: center; color: #666;">Loading logs for ' + vehicle + '...</p>';
+
+        google.script.run.withSuccessHandler(function(data) {
+          var html = '';
+          html += '<div class="stats-container">';
+          html += '<div class="stat-card"><h3>' + data.nonRunCount + '</h3><p>NON-RUN DAYS</p></div>';
+          html += '<div class="stat-card red"><h3>' + data.incidentCount + '</h3><p>INCIDENTS</p></div>';
+          html += '</div>';
+
+          html += '<div class="flex-header">';
+          html += '<span style="font-size: 13px; font-weight: bold; color: var(--text-muted);">Logs for: ' + vehicle + '</span>';
+          html += '<button onclick="document.getElementById(\'dashVehicleSelect\').value=\'\'; loadMacroDashboard();" style="background: none; border: none; color: var(--primary-color); cursor: pointer; font-weight: bold; font-size: 13px; padding: 0;">&larr; Back to Fleet Overview</button>';
+          html += '</div>';
+
+          html += '<div style="margin-top: 10px;">';
+          html += '<input type="text" id="logFilterInput" placeholder="Filter logs by keyword..." onkeyup="filterLogCards()">';
+          html += '</div>';
+
+          html += '<div class="log-card-list" id="logCardContainer">';
+          if (data.logs.length > 0) {
+            data.logs.forEach(function(log) {
+              var cardClass = (log.type.indexOf('Incident') !== -1) ? 'log-item incident' : 'log-item';
+              html += '<div class="' + cardClass + '" data-search="' + (log.date + ' ' + log.text).toLowerCase() + '">';
+              html += '<div class="log-meta">' + log.date + ' &bull; ' + log.type.toUpperCase() + '</div>';
+              html += '<div>' + log.text + '</div>';
+              html += '</div>';
+            });
+          } else {
+            html += '<p style="color: #888; font-size: 13px; text-align: center; margin-top: 20px;">No logs recorded for this vehicle yet.</p>';
+          }
+          html += '</div>';
+          container.innerHTML = html;
+        }).getVehicleDashboardData(vehicle);
+      }
+
+      function filterLogCards() {
+        var query = document.getElementById('logFilterInput').value.toLowerCase();
+        var cards = document.getElementsByClassName('log-item');
+        for (var i = 0; i < cards.length; i++) {
+          var text = cards[i].getAttribute('data-search');
+          cards[i].style.display = (text.indexOf(query) !== -1) ? 'block' : 'none';
+        }
+      }
+    </script>
+  </body>
+</html>
